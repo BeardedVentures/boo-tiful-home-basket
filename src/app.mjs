@@ -5,7 +5,7 @@ import {
   fingerprintEntry,
   isRecentDuplicate,
   validateEntry
-} from "./entry-core.mjs";
+} from "./entry-core.mjs?v=20261030a";
 
 const config = window.BASKET_CONFIG || {};
 const localPreview = ["localhost", "127.0.0.1"].includes(window.location.hostname) && new URLSearchParams(window.location.search).get("preview") === "1";

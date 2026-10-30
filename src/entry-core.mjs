@@ -1,14 +1,31 @@
 const EMAIL_LOCAL_PATTERN = /^[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+$/i;
 const EMAIL_DOMAIN_LABEL_PATTERN = /^[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?$/i;
 const HAS_LETTER = /\p{L}/u;
-const STATE_CODES = new Set([
-  "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
-  "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
-  "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
-  "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
-  "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
-  "DC", "PR", "VI", "GU", "AS", "MP"
+const STATE_NAME_TO_CODE = new Map([
+  ["alabama", "AL"], ["alaska", "AK"], ["arizona", "AZ"], ["arkansas", "AR"],
+  ["california", "CA"], ["colorado", "CO"], ["connecticut", "CT"], ["delaware", "DE"],
+  ["florida", "FL"], ["georgia", "GA"], ["hawaii", "HI"], ["idaho", "ID"],
+  ["illinois", "IL"], ["indiana", "IN"], ["iowa", "IA"], ["kansas", "KS"],
+  ["kentucky", "KY"], ["louisiana", "LA"], ["maine", "ME"], ["maryland", "MD"],
+  ["massachusetts", "MA"], ["michigan", "MI"], ["minnesota", "MN"], ["mississippi", "MS"],
+  ["missouri", "MO"], ["montana", "MT"], ["nebraska", "NE"], ["nevada", "NV"],
+  ["new hampshire", "NH"], ["new jersey", "NJ"], ["new mexico", "NM"], ["new york", "NY"],
+  ["north carolina", "NC"], ["north dakota", "ND"], ["ohio", "OH"], ["oklahoma", "OK"],
+  ["oregon", "OR"], ["pennsylvania", "PA"], ["rhode island", "RI"], ["south carolina", "SC"],
+  ["south dakota", "SD"], ["tennessee", "TN"], ["texas", "TX"], ["utah", "UT"],
+  ["vermont", "VT"], ["virginia", "VA"], ["washington", "WA"], ["west virginia", "WV"],
+  ["wisconsin", "WI"], ["wyoming", "WY"], ["district of columbia", "DC"],
+  ["puerto rico", "PR"], ["virgin islands", "VI"], ["guam", "GU"],
+  ["american samoa", "AS"], ["northern mariana islands", "MP"]
 ]);
+const STATE_CODES = new Set(STATE_NAME_TO_CODE.values());
+const STATE_NAME_PATTERN = [...STATE_NAME_TO_CODE.keys()]
+  .sort((left, right) => right.length - left.length)
+  .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+  .join("|");
+const STATE_OR_CODE_PATTERN = `(?:${[...STATE_CODES].join("|")}|${STATE_NAME_PATTERN})`;
+const STREET_SUFFIX_PATTERN = "(?:Aly|Alley|Ave|Avenue|Blvd|Boulevard|Cir|Circle|Ct|Court|Cv|Cove|Cres|Crescent|Dr|Drive|Expy|Expressway|Hwy|Highway|Ln|Lane|Loop|Pkwy|Parkway|Pl|Place|Plz|Plaza|Rd|Road|Sq|Square|St|Street|Ter|Terrace|Trl|Trail|Way)";
+const TRAILING_COUNTRY_PATTERN = /(?:,\s*|\s+)(?:USA|U\.?\s*S\.?\s*A\.?|US|U\.?\s*S\.?|United States(?: of America)?)\.?$/i;
 
 export function digitsOnly(value) {
   return String(value ?? "").replace(/\D/g, "");
@@ -59,17 +76,37 @@ export function normalizeAddress(value) {
 }
 
 export function isValidStreetAddress(value) {
-  const address = normalizeAddress(value);
-  const parts = address.split(",").map(part => part.trim()).filter(Boolean);
-  if (parts.length < 3) return false;
+  const address = normalizeAddress(value)
+    .replace(TRAILING_COUNTRY_PATTERN, "")
+    .replace(/,\s*$/, "")
+    .trim();
+  const stateZipPattern = new RegExp(`(?:,\\s*|\\s+)(${STATE_OR_CODE_PATTERN})\\s+(\\d{5}(?:-\\d{4})?)$`, "i");
+  const stateZip = address.match(stateZipPattern);
+  if (!stateZip) return false;
 
-  const stateZip = parts.at(-1).match(/^([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/i);
-  if (!stateZip || !STATE_CODES.has(stateZip[1].toUpperCase())) return false;
+  const stateValue = stateZip[1].toLowerCase();
+  const stateCode = stateValue.length === 2 ? stateValue.toUpperCase() : STATE_NAME_TO_CODE.get(stateValue);
+  if (!stateCode || !STATE_CODES.has(stateCode)) return false;
 
-  const city = parts.at(-2);
+  const remainder = address.slice(0, stateZip.index).replace(/,\s*$/, "").trim();
+  let street;
+  let city;
+  if (remainder.includes(",")) {
+    const parts = remainder.split(",").map(part => part.trim()).filter(Boolean);
+    if (parts.length < 2) return false;
+    city = parts.pop();
+    street = parts.join(", ");
+  } else {
+    const noCommaPattern = new RegExp(
+      `^(\\d+[A-Z]?(?:-\\d+[A-Z]?)?(?:\\s+1\\/2)?\\s+.+?\\b${STREET_SUFFIX_PATTERN}\\b(?:\\s+(?:Apt|Apartment|Unit|Suite|Ste|#)\\s*[A-Z0-9-]+)?)\\s+([\\p{L} .'-]+)$`,
+      "iu"
+    );
+    const noComma = remainder.match(noCommaPattern);
+    if (!noComma) return false;
+    [, street, city] = noComma;
+  }
+
   if (city.length < 2 || !HAS_LETTER.test(city) || !/^[\p{L} .'-]+$/u.test(city)) return false;
-
-  const street = parts.slice(0, -2).join(", ");
   if (/^P\.?\s*O\.?\s+BOX\b/i.test(street)) return false;
   const streetMatch = street.match(/^\d+[A-Z]?(?:-\d+[A-Z]?)?(?:\s+1\/2)?\s+(.+)$/i);
   if (!streetMatch || !HAS_LETTER.test(streetMatch[1])) return false;
@@ -98,7 +135,7 @@ export function validateEntry(input, { minimumFillSeconds = 2, now = Date.now() 
   }
 
   if (!isValidStreetAddress(entry.address)) {
-    errors.address = "Use street, city, state, and ZIP (for example: 123 Main St, Dallas, TX 75201).";
+    errors.address = "Enter a complete address with street, city, state, and ZIP.";
   }
   const elapsedSeconds = entry.startedAt ? (now - entry.startedAt) / 1000 : 0;
   const isLikelyBot = Boolean(entry.website) || elapsedSeconds < minimumFillSeconds;
